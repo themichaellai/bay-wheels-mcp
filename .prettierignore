@@ -1,0 +1,9 @@
+node_modules/
+bun.lock*
+dist/
+build/
+.next/
+coverage/
+*.snap
+*.log
+*.min.*
