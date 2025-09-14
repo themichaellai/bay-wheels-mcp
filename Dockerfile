@@ -1,17 +1,23 @@
-# Use Bun to run TypeScript directly (no build step needed)
-FROM oven/bun:1 AS base
+FROM node:22-alpine AS base
 WORKDIR /app
 
-# Install deps first for better layer caching
-COPY package.json bun.lockb* ./
+# Install Bun (for dependency installation) and curl/bash
+RUN apk add --no-cache bash curl \
+  && bash -lc "curl -fsSL https://bun.sh/install | bash" \
+  && ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+
+# Use Bun to install dependencies for speed/determinism
+COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
 
 # Copy source
 COPY . .
 
-# Fly will set PORT; default to 8080 just in case
+# Environment
 ENV PORT=8080
+ENV NODE_ENV=production
+
 EXPOSE 8080
 
-# Start your MCP server
-CMD ["bun", "index.ts"]
+# Run server with Node, stripping TS types and larger header size
+CMD ["node", "--max-http-header-size=128000", "--experimental-strip-types", "index.ts"]
