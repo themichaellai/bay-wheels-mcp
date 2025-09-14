@@ -89,30 +89,29 @@ function haversineMeters(a: { lat: number; lon: number }, b: { lat: number; lon:
 // --- MCP server setup ---
 const server = new McpServer({ name: "baywheels-mcp", version: "0.1.0" });
 
-// Resource: raw GBFS JSON via template gbfs://{name}
+// Resource: only expose station_information as a single resource
 server.registerResource(
-  "gbfs-feed",
-  new ResourceTemplate("gbfs://{name}", {
-    list: async () => {
-      const names = Object.keys(await loadFeedMap());
-      return {
-        resources: names.map((n) => ({
-          name: n,
-          uri: `gbfs://${n}`,
-          title: `GBFS ${n}`,
-          description: `Bay Wheels GBFS feed: ${n}`,
+  "station-information",
+  new ResourceTemplate("gbfs://station_information", {
+    list: async () => ({
+      resources: [
+        {
+          name: "station_information",
+          uri: "gbfs://station_information",
+          title: "GBFS station_information",
+          description: "Bay Wheels GBFS station_information feed",
           mimeType: "application/json",
-        })),
-      };
-    },
+        },
+      ],
+    }),
   }),
   {
-    title: "Bay Wheels GBFS feed",
-    description: "Raw GBFS JSON (station_information, station_status, etc.)",
+    title: "Bay Wheels station_information",
+    description: "Raw GBFS JSON for station_information",
     mimeType: "application/json",
   },
-  async (uri, { name }) => {
-    const json = await getFeed(String(name));
+  async (uri) => {
+    const json = await getFeed("station_information");
     return {
       contents: [
         {
@@ -122,6 +121,29 @@ server.registerResource(
         },
       ],
     };
+  },
+);
+
+// Resource: station_information entry by station_id
+// Tool: station_information entry by station_id
+server.registerTool(
+  "station_info",
+  {
+    title: "Get station_information by ID",
+    description: "Returns station_information entry for a given station_id",
+    inputSchema: { station_id: z.string() },
+  },
+  async ({ station_id }) => {
+    const info = await getFeed("station_information");
+    const stations: any[] = Array.isArray(info?.data?.stations) ? info.data.stations : [];
+    const entry = stations.find((s) => s.station_id === String(station_id));
+    if (!entry) {
+      return {
+        content: [{ type: "text", text: `Station ${station_id} not found` }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(entry, null, 2) }] };
   },
 );
 
@@ -169,6 +191,18 @@ server.registerTool(
         isError: true,
       };
     }
+    const numE =
+      typeof sStat.num_ebikes_available === "number"
+        ? sStat.num_ebikes_available
+        : Array.isArray(sStat.vehicle_types_available)
+          ? sStat.vehicle_types_available
+              .filter((v: any) =>
+                typeof v?.vehicle_type_id === "string"
+                  ? String(v.vehicle_type_id).toLowerCase().includes("ebike")
+                  : false,
+              )
+              .reduce((sum: number, v: any) => sum + (Number(v?.count) || 0), 0) || null
+          : null;
     const out = {
       station_id,
       name: sInfo.name,
@@ -178,6 +212,7 @@ server.registerTool(
       status: {
         last_reported: sStat.last_reported,
         num_bikes_available: sStat.num_bikes_available,
+        num_ebikes_available: numE,
         num_docks_available: sStat.num_docks_available,
         is_installed: sStat.is_installed,
         is_renting: sStat.is_renting,
@@ -212,6 +247,18 @@ server.registerTool(
       .map((s: any) => {
         const st = statusById.get(s.station_id) ?? {};
         const distance_m = Math.round(haversineMeters({ lat, lon }, { lat: s.lat, lon: s.lon }));
+        const numE =
+          typeof st.num_ebikes_available === "number"
+            ? st.num_ebikes_available
+            : Array.isArray(st.vehicle_types_available)
+              ? st.vehicle_types_available
+                  .filter((v: any) =>
+                    typeof v?.vehicle_type_id === "string"
+                      ? String(v.vehicle_type_id).toLowerCase().includes("ebike")
+                      : false,
+                  )
+                  .reduce((sum: number, v: any) => sum + (Number(v?.count) || 0), 0) || null
+              : null;
         return {
           station_id: s.station_id,
           name: s.name,
@@ -220,6 +267,7 @@ server.registerTool(
           capacity: s.capacity ?? null,
           distance_m,
           num_bikes_available: st.num_bikes_available ?? null,
+          num_ebikes_available: numE,
           num_docks_available: st.num_docks_available ?? null,
           is_installed: st.is_installed ?? null,
           is_renting: st.is_renting ?? null,
